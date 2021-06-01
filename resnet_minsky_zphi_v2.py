@@ -1,5 +1,5 @@
 import keras
-from keras.layers import Input, Conv2D, ReLU, UpSampling2D, Add
+from keras.layers import Input, Conv2D, ReLU, Conv2DTranspose, Dense, Add, Flatten, Reshape
 from keras.models import Model
 import uproot
 import numpy as np
@@ -9,7 +9,7 @@ import argparse
 import os
 import pandas as pd
 
-VARIATION_NAME = "zphi1_resnet_v1"
+VARIATION_NAME = "zphi1_resnet_v2"
 os.system("mkdir {}".format(VARIATION_NAME))
 
 TRAINING_EPOCHS = 50
@@ -74,11 +74,11 @@ Bchain_zphi1_refrun = np.asarray(Bchain_zphi1_refrun)
 Bchain_zphi1_allgood = np.asarray(Bchain_zphi1_allgood)
 Bchain_zphi1_allbad = np.asarray(Bchain_zphi1_allbad)
 
-print("Dataset has {} lumisections.".format(len(Bchain_zphi1_refrun)))
-print()
-print("TO START")
-print("PRESS ENTER KEY")
-input()
+#print("Dataset has {} lumisections.".format(len(Bchain_zphi1_refrun)))
+#print()
+#print("TO START")
+#print("PRESS ENTER KEY")
+#input()
 
 Bchain_zphi1_2D = np.reshape(Bchain_zphi1_refrun, (-1, 202, 302))[:, 1:201, 80:220]
 
@@ -119,37 +119,44 @@ def residual_block_enc(x, filter_number, kernel_size, strides, padding="valid"):
     out = Add()([x, y])
     return out
 
-def residual_block_dec(x, filter_number, kernel_size, upsampling_kernel):
-    if upsampling_kernel > 1: 
-        y = UpSampling2D(upsampling_kernel, interpolation="bilinear")(x)
-        y = Conv2D(filter_number, kernel_size, padding="same")(y)
-    else:
-        y = Conv2D(filter_number, kernel_size, padding="same")(x)
+def residual_block_dec(x, filter_number, kernel_size, strides, padding="valid"):
+    y = Conv2DTranspose(filter_number, kernel_size, strides=strides, padding=padding)(x)
     y = ReLU()(y)
-    y = Conv2D(filter_number, kernel_size, padding="same")(y)
+    y = Conv2DTranspose(filter_number, kernel_size, padding="same")(y)
     
-    x = UpSampling2D(upsampling_kernel, interpolation="bilinear")(x)
-    x = Conv2D(filter_number, kernel_size, padding="same")(x)
+    x = Conv2DTranspose(filter_number, kernel_size, strides=strides, padding=padding)(x)
+    
+    out = Add()([x, y])
+    return out
+
+def residual_block_dense(x, outsize):
+    y = Dense(outsize)(x)
+    y = ReLU()(y)
+    y = Dense(outsize)(y)
+    
+    x = Dense(outsize)(x)
     
     out = Add()([x, y])
     return out
 
 def base_model():
     input_layer = Input(shape=input_shape)
-    resnet_layer = residual_block_enc(input_layer, 60, (2, 2), 1, padding="same")
-    resnet_layer = residual_block_enc(resnet_layer, 60, (2, 2), 2)
-    resnet_layer = residual_block_enc(resnet_layer, 60, (2, 2), 1, padding="same")
-    resnet_layer = residual_block_enc(resnet_layer, 60, (2, 2), 2)
-    resnet_layer = residual_block_enc(resnet_layer, 1, (2, 2), 1, padding="same")
-
-    resnet_layer = residual_block_dec(resnet_layer, 60, (2, 2), 1)
-    resnet_layer = residual_block_dec(resnet_layer, 60, (2, 2), 2)
-    resnet_layer = residual_block_dec(resnet_layer, 60, (2, 2), 1)
-    resnet_layer = residual_block_dec(resnet_layer, 60, (2, 2), 2)
-    resnet_layer = residual_block_dec(resnet_layer, 1, (2, 2), 1)
+    resnet_layer = residual_block_enc(input_layer, 128, 3, 2, padding="same")
+    resnet_layer = residual_block_enc(resnet_layer, 128, 3, 1, padding="same")
+    resnet_layer = residual_block_enc(resnet_layer, 128, 3, 1, padding="same")
+    resnet_layer = residual_block_enc(resnet_layer, 128, 3, 2, padding="same")
+    resnet_layer = residual_block_enc(resnet_layer, 128, 3, 1, padding="same")
+    resnet_layer = residual_block_enc(resnet_layer, 1, 3, 1, padding="same")
+    
+    resnet_layer = residual_block_dec(resnet_layer, 128, 3, 1, padding="same")
+    resnet_layer = residual_block_dec(resnet_layer, 128, 3, 1, padding="same")
+    resnet_layer = residual_block_dec(resnet_layer, 128, 3, 2, padding="same")
+    resnet_layer = residual_block_dec(resnet_layer, 128, 3, 1, padding="same")
+    resnet_layer = residual_block_dec(resnet_layer, 128, 3, 1, padding="same")
+    resnet_layer = residual_block_dec(resnet_layer, 1, 3, 2, padding="same")
     
     resnet_model = Model(inputs = [input_layer], outputs = [resnet_layer])
-    resnet_model.compile(loss = "mean_squared_error", optimizer="adadelta")
+    resnet_model.compile(loss = "mse", optimizer="adadelta")
     return resnet_model
 
 resnet_model = base_model()
